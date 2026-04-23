@@ -1,0 +1,30 @@
+# .gitignore
+
+# 1. Environment and Secrets (CRITICAL)
+.env
+.env.*
+
+# 2. Virtual Environments
+venv/
+env/
+__pycache__/
+*.pyc
+
+# 3. Docker and Databases
+docker_volumes/
+postgres_data/
+redis_data/
+
+# 4. Data (Do not upload large datasets to GitHub)
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# 5. IDE and OS Files
+.vscode/
+.idea/
+.DS_Store
+
+# 6. Testing Caches
+.pytest_cache/

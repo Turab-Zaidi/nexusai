@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: nexusai_postgres
+    environment:
+      POSTGRES_USER: nexusai
+      POSTGRES_PASSWORD: nexusai123
+      POSTGRES_DB: nexusai
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nexusai"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nexusai_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  langfuse:
+    image: langfuse/langfuse:2
+    container_name: nexusai_langfuse
+    ports:
+      - "3000:3000"
+    environment:
+      DATABASE_URL: postgresql://nexusai:nexusai123@postgres:5432/nexusai
+      NEXTAUTH_SECRET: your-nextauth-secret-here
+      NEXTAUTH_URL: http://localhost:3000
+      SALT: your-salt-here
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
+  redis_data:
