@@ -16,6 +16,7 @@ class ConversationStateEnum(str, Enum):
     COLLECTING_INFO = "COLLECTING_INFO"
     KNOWLEDGE_RETRIEVAL = "KNOWLEDGE_RETRIEVAL"
     ACTION_EXECUTION = "ACTION_EXECUTION"
+    RESOLUTION_EXECUTION = "RESOLUTION_EXECUTION"
     QUALITY_CHECK = "QUALITY_CHECK"
     REVISION = "REVISION"
     RESPONSE_DELIVERY = "RESPONSE_DELIVERY"
@@ -57,6 +58,7 @@ class NexusState(TypedDict):
     # Escalation
     escalated: bool
     escalation_reason: Optional[str]
+    handoff_package: Optional[dict]
 
     # Tracking
     turn_count: int

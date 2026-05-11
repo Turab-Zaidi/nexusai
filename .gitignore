@@ -28,3 +28,6 @@ data/processed/*
 
 # 6. Testing Caches
 .pytest_cache/
+
+# 7. Planning and Analysis Docs
+.planning/

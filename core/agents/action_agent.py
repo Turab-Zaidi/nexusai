@@ -1,5 +1,5 @@
 # core/agents/action_agent.py
-
+import json
 from .base_agent import BaseAgent, AgentResult
 from core.tools.implementations.order_lookup import lookup_order
 from core.tools.implementations.refund_processor import process_refund
@@ -11,12 +11,11 @@ class ActionAgent(BaseAgent):
     Handles: order lookup, refunds, tickets.
     """
 
-    APPROVAL_THRESHOLD = 500.0  # Refunds above this amount will require manager approval
-
+    APPROVAL_THRESHOLD = 500.0  
     def __init__(self):
         super().__init__(
             name="action_agent",
-            model_tier="standard" # Llama 70B for high-quality, tool-based reasoning
+            model_tier="standard" 
         )
 
     async def run(
@@ -62,7 +61,6 @@ class ActionAgent(BaseAgent):
                     context = "Order is not eligible for a refund."
                 elif order_data["amount"] > self.APPROVAL_THRESHOLD:
                     context = f"Refund of ${order_data['amount']} is above the ${self.APPROVAL_THRESHOLD} threshold and requires manager approval. A ticket has been created."
-                    # In a real system, you'd create a ticket here.
                 else:
                     # Process the refund directly
                     refund_result = await process_refund(order_id, order_data["amount"], "Customer request")
@@ -85,7 +83,6 @@ class ActionAgent(BaseAgent):
                 llm_response=llm_response
             )
 
-        # ── Default case for unhandled intents ────────────────────────
         llm_response = await self._generate_error_response(user_message, f"The intent '{intent}' is not handled by this agent.")
         return self.make_result(
             success=False,

@@ -2,8 +2,15 @@
 
 from langgraph.graph import StateGraph, END
 import os
+import dataclasses
 
 from .state import NexusState, ConversationStateEnum
+from core.agents.input_classifier import InputClassifier
+from core.agents.knowledge_agent import KnowledgeAgent
+from core.agents.action_agent import ActionAgent
+from core.agents.resolution_agent import ResolutionAgent
+from core.agents.escalation_agent import EscalationAgent
+from core.quality.judge import QualityJudge
 
 
 def create_graph():
@@ -42,6 +49,7 @@ def create_graph():
             "collecting_info": "collecting_info",
             "knowledge_retrieval": "knowledge_retrieval",
             "action_execution": "action_execution",
+            "resolution_execution": "resolution_execution",
             "escalation": "escalation"
         }
     )
@@ -49,6 +57,7 @@ def create_graph():
     graph.add_edge("collecting_info", "intent_classification")
     graph.add_edge("knowledge_retrieval", "quality_check")
     graph.add_edge("action_execution", "quality_check")
+    graph.add_edge("resolution_execution", "quality_check")
 
     # From quality_check → route based on AI judge scores
     graph.add_conditional_edges(
@@ -110,6 +119,9 @@ def route_after_classification(state: NexusState) -> str:
 
     # Check if we need more information before taking action
     if intent in action_intents:
+        if analyzed.get("complexity") == 3:
+            return "resolution_execution"
+            
         entities = analyzed.get("entities", {})
         if not entities.get("order_id") and intent in ["get_refund", "cancel_order", "track_order"]:
             return "collecting_info"
@@ -153,35 +165,136 @@ def route_after_revision(state: NexusState) -> str:
 
 
 
-def greeting_node(state: NexusState) -> dict:
+# Instantiate agents
+input_classifier = InputClassifier("input_classifier", "fast")
+knowledge_agent = KnowledgeAgent()
+action_agent = ActionAgent()
+resolution_agent = ResolutionAgent()
+escalation_agent = EscalationAgent()
+quality_judge = QualityJudge()
+
+async def greeting_node(state: NexusState) -> dict:
     return {
         "current_state": ConversationStateEnum.GREETING,
         "turn_count": state.get("turn_count", 0) + 1
     }
 
-def intent_classification_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.INTENT_CLASSIFICATION}
+async def intent_classification_node(state: NexusState) -> dict:
+    message = state.get("current_message", "")
+    result = await input_classifier.run(message)
+    # Convert AnalyzedInput dataclass to dict
+    analyzed_dict = dataclasses.asdict(result.output)
+    return {
+        "current_state": ConversationStateEnum.INTENT_CLASSIFICATION,
+        "analyzed_input": analyzed_dict
+    }
 
-def collecting_info_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.COLLECTING_INFO}
+async def collecting_info_node(state: NexusState) -> dict:
+    return {
+        "current_state": ConversationStateEnum.COLLECTING_INFO,
+        "agent_response": "I need a bit more information to help you with that. Could you provide your order number?"
+    }
 
-def knowledge_retrieval_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.KNOWLEDGE_RETRIEVAL}
+async def knowledge_retrieval_node(state: NexusState) -> dict:
+    message = state.get("current_message", "")
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unclear")
+    
+    result = await knowledge_agent.run(user_message=message, intent=intent)
+    return {
+        "current_state": ConversationStateEnum.KNOWLEDGE_RETRIEVAL,
+        "active_agent": "knowledge_agent",
+        "agent_response": result.output.get("response", ""),
+        "total_tokens": state.get("total_tokens", 0) + result.tokens_used
+    }
 
-def action_execution_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.ACTION_EXECUTION}
+async def action_execution_node(state: NexusState) -> dict:
+    message = state.get("current_message", "")
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unclear")
+    entities = analyzed.get("entities", {})
+    
+    result = await action_agent.run(
+        intent=intent,
+        entities=entities,
+        user_id=state.get("user_id", "anonymous"),
+        conversation_id=state.get("conversation_id", "unknown"),
+        user_message=message
+    )
+    return {
+        "current_state": ConversationStateEnum.ACTION_EXECUTION,
+        "active_agent": "action_agent",
+        "agent_response": result.output.get("response", ""),
+        "tools_called": result.output.get("tools_called", []),
+        "tool_results": result.output.get("tool_results", []),
+        "total_tokens": state.get("total_tokens", 0) + result.tokens_used
+    }
 
-def quality_check_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.QUALITY_CHECK, "quality_passed": True}
+async def resolution_execution_node(state: NexusState) -> dict:
+    message = state.get("current_message", "")
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unclear")
+    entities = analyzed.get("entities", {})
+    
+    result = await resolution_agent.run(
+        intent=intent,
+        entities=entities,
+        user_id=state.get("user_id", "anonymous"),
+        conversation_id=state.get("conversation_id", "unknown"),
+        user_message=message
+    )
+    return {
+        "current_state": ConversationStateEnum.RESOLUTION_EXECUTION,
+        "active_agent": "resolution_agent",
+        "agent_response": result.output.get("response", ""),
+        "tools_called": result.output.get("tools_called", []),
+        "tool_results": result.output.get("tool_results", []),
+        "total_tokens": state.get("total_tokens", 0) + result.tokens_used
+    }
 
-def revision_node(state: NexusState) -> dict:
+async def quality_check_node(state: NexusState) -> dict:
+    message = state.get("current_message", "")
+    agent_response = state.get("agent_response", "")
+    tool_results = state.get("tool_results", [])
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unclear")
+
+    result = await quality_judge.evaluate(
+        user_message=message,
+        agent_response=agent_response,
+        tool_results=tool_results,
+        intent=intent
+    )
+    
+    scores = {
+        "factual_accuracy": result.factual_accuracy,
+        "helpfulness": result.helpfulness,
+        "policy_compliance": result.policy_compliance,
+        "tool_correctness": result.tool_correctness,
+        "conversation_flow": result.conversation_flow
+    }
+
+    return {
+        "current_state": ConversationStateEnum.QUALITY_CHECK,
+        "quality_passed": result.overall_pass,
+        "quality_scores": scores
+    }
+
+async def revision_node(state: NexusState) -> dict:
     return {
         "current_state": ConversationStateEnum.REVISION,
         "revision_count": state.get("revision_count", 0) + 1
     }
 
-def response_delivery_node(state: NexusState) -> dict:
+async def response_delivery_node(state: NexusState) -> dict:
     return {"current_state": ConversationStateEnum.RESPONSE_DELIVERY}
 
-def escalation_node(state: NexusState) -> dict:
-    return {"current_state": ConversationStateEnum.ESCALATION, "escalated": True}
+async def escalation_node(state: NexusState) -> dict:
+    result = await escalation_agent.run(state)
+    return {
+        "current_state": ConversationStateEnum.ESCALATION,
+        "escalated": True,
+        "escalation_reason": result.output.get("handoff_package", {}).get("escalation_reason", "unknown"),
+        "agent_response": result.output.get("response", ""),
+        "handoff_package": result.output.get("handoff_package", {})
+    }

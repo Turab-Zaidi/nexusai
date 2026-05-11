@@ -31,7 +31,7 @@ class AnalyzedInput:
     entities: EntityResult
     sentiment: SentimentResult
     language: str
-    complexity: int       # 1=simple, 2=medium, 3=complex
+    complexity: int       
     risk_flags: list[str]
     word_count: int
 
