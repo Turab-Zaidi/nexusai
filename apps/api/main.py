@@ -14,6 +14,8 @@ load_dotenv()
 from infrastructure.db.connection import create_tables
 from apps.api.routes.chat import router as chat_router
 from apps.api.routes.health import router as health_router
+from apps.api.routes.analytics import router as analytics_router
+from apps.api.routes.admin import router as admin_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -42,3 +44,5 @@ app.add_middleware(
 
 app.include_router(health_router)
 app.include_router(chat_router, prefix="/api")
+app.include_router(analytics_router, prefix="/api")
+app.include_router(admin_router, prefix="/api")

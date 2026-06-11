@@ -47,6 +47,7 @@ class NexusState(TypedDict):
     quality_scores: Optional[dict]
     revision_count: int
     quality_passed: Optional[bool]
+    revision_suggestion: Optional[str]
 
     # Memory and context
     user_context: Optional[dict]

@@ -2,6 +2,7 @@
 
 from langgraph.graph import StateGraph, END
 import os
+import json
 import dataclasses
 
 from .state import NexusState, ConversationStateEnum
@@ -11,6 +12,8 @@ from core.agents.action_agent import ActionAgent
 from core.agents.resolution_agent import ResolutionAgent
 from core.agents.escalation_agent import EscalationAgent
 from core.quality.judge import QualityJudge
+from core.memory.episodic_memory import episodic_memory
+from infrastructure.cache.redis_cache import redis_cache
 
 
 def create_graph():
@@ -28,6 +31,7 @@ def create_graph():
     graph.add_node("collecting_info", collecting_info_node)
     graph.add_node("knowledge_retrieval", knowledge_retrieval_node)
     graph.add_node("action_execution", action_execution_node)
+    graph.add_node("resolution_execution", resolution_execution_node)
     graph.add_node("quality_check", quality_check_node)
     graph.add_node("revision", revision_node)
     graph.add_node("response_delivery", response_delivery_node)
@@ -173,11 +177,27 @@ resolution_agent = ResolutionAgent()
 escalation_agent = EscalationAgent()
 quality_judge = QualityJudge()
 
+
+# ── Node Implementations ─────────────────────────────────
+
 async def greeting_node(state: NexusState) -> dict:
+    """
+    Entry point. Retrieves user memories from Mem0
+    to provide personalized context to downstream agents.
+    """
+    user_id = state.get("user_id", "anonymous")
+    message = state.get("current_message", "")
+
+    # Retrieve episodic memories for this user
+    memories = await episodic_memory.retrieve(user_id=user_id, query=message)
+    user_context_str = episodic_memory.format_memories_for_prompt(memories)
+
     return {
         "current_state": ConversationStateEnum.GREETING,
-        "turn_count": state.get("turn_count", 0) + 1
+        "turn_count": state.get("turn_count", 0) + 1,
+        "user_context": {"memories": memories, "context_string": user_context_str}
     }
+
 
 async def intent_classification_node(state: NexusState) -> dict:
     message = state.get("current_message", "")
@@ -189,24 +209,92 @@ async def intent_classification_node(state: NexusState) -> dict:
         "analyzed_input": analyzed_dict
     }
 
+
 async def collecting_info_node(state: NexusState) -> dict:
+    """
+    Dynamically asks for missing information using the LLM
+    instead of a hardcoded string.
+    """
+    from infrastructure.llm.nim_client import nim_client
+
+    message = state.get("current_message", "")
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unclear")
+    entities = analyzed.get("entities", {})
+
+    # Figure out what's missing
+    missing_fields = []
+    if not entities.get("order_id") and intent in ["get_refund", "cancel_order", "track_order", "track_refund"]:
+        missing_fields.append("order number")
+    if not entities.get("product_name") and intent in ["change_order"]:
+        missing_fields.append("product name")
+
+    if not missing_fields:
+        missing_fields = ["more details about your request"]
+
+    # Use LLM to generate a natural follow-up question
+    response = await nim_client.complete(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a friendly customer support agent. "
+                    "The customer wants help but is missing some information. "
+                    "Ask them politely for the missing information in one short sentence. "
+                    "Be specific about what you need."
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Customer said: '{message}'\n"
+                    f"Their intent is: {intent}\n"
+                    f"Missing information: {', '.join(missing_fields)}\n"
+                    "Generate a follow-up question asking for the missing info."
+                )
+            }
+        ],
+        tier="fast",
+        max_tokens=100
+    )
+
+    follow_up = response.get("content") or f"Could you please provide your {', '.join(missing_fields)}?"
+
     return {
         "current_state": ConversationStateEnum.COLLECTING_INFO,
-        "agent_response": "I need a bit more information to help you with that. Could you provide your order number?"
+        "agent_response": follow_up
     }
+
 
 async def knowledge_retrieval_node(state: NexusState) -> dict:
     message = state.get("current_message", "")
     analyzed = state.get("analyzed_input", {})
     intent = analyzed.get("primary_intent", "unclear")
-    
+
+    # Check Redis cache first
+    cached_response = await redis_cache.get(intent=intent, query=message)
+    if cached_response:
+        return {
+            "current_state": ConversationStateEnum.KNOWLEDGE_RETRIEVAL,
+            "active_agent": "knowledge_agent",
+            "agent_response": cached_response,
+            "total_tokens": state.get("total_tokens", 0)  # No new tokens used
+        }
+
     result = await knowledge_agent.run(user_message=message, intent=intent)
+    response_text = result.output.get("response", "")
+
+    # Cache the response for future similar queries
+    if response_text:
+        await redis_cache.set(intent=intent, query=message, response=response_text)
+
     return {
         "current_state": ConversationStateEnum.KNOWLEDGE_RETRIEVAL,
         "active_agent": "knowledge_agent",
-        "agent_response": result.output.get("response", ""),
+        "agent_response": response_text,
         "total_tokens": state.get("total_tokens", 0) + result.tokens_used
     }
+
 
 async def action_execution_node(state: NexusState) -> dict:
     message = state.get("current_message", "")
@@ -230,6 +318,7 @@ async def action_execution_node(state: NexusState) -> dict:
         "total_tokens": state.get("total_tokens", 0) + result.tokens_used
     }
 
+
 async def resolution_execution_node(state: NexusState) -> dict:
     message = state.get("current_message", "")
     analyzed = state.get("analyzed_input", {})
@@ -251,6 +340,7 @@ async def resolution_execution_node(state: NexusState) -> dict:
         "tool_results": result.output.get("tool_results", []),
         "total_tokens": state.get("total_tokens", 0) + result.tokens_used
     }
+
 
 async def quality_check_node(state: NexusState) -> dict:
     message = state.get("current_message", "")
@@ -277,17 +367,101 @@ async def quality_check_node(state: NexusState) -> dict:
     return {
         "current_state": ConversationStateEnum.QUALITY_CHECK,
         "quality_passed": result.overall_pass,
-        "quality_scores": scores
+        "quality_scores": scores,
+        "revision_suggestion": result.revision_suggestion
     }
+
 
 async def revision_node(state: NexusState) -> dict:
+    """
+    Real revision logic: takes the judge's feedback and asks the
+    original agent to regenerate a better response.
+    """
+    from infrastructure.llm.nim_client import nim_client
+
+    message = state.get("current_message", "")
+    original_response = state.get("agent_response", "")
+    scores = state.get("quality_scores", {})
+    suggestion = state.get("revision_suggestion", "")
+    tool_results = state.get("tool_results", [])
+    active_agent = state.get("active_agent", "unknown")
+
+    # Build feedback context for the rewrite
+    failing_dims = []
+    for dim, score in scores.items():
+        threshold = {"factual_accuracy": 4, "helpfulness": 3, "policy_compliance": 4,
+                      "tool_correctness": 4, "conversation_flow": 3}.get(dim, 3)
+        if score < threshold:
+            failing_dims.append(f"{dim}: {score}/5 (needs {threshold}+)")
+
+    feedback_text = "\n".join(failing_dims)
+
+    # Ask the LLM to rewrite the response incorporating the feedback
+    revision_response = await nim_client.complete(
+        messages=[
+            {
+                "role": "system",
+                "content": (
+                    "You are a customer support agent. Your previous response was rejected "
+                    "by the quality evaluator. You must rewrite it to fix the identified issues.\n\n"
+                    "RULES:\n"
+                    "- Fix ONLY the issues identified below\n"
+                    "- Keep the factual content from tool results accurate\n"
+                    "- Be empathetic and helpful\n"
+                    "- Keep the response under 100 words"
+                )
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"Customer message: '{message}'\n\n"
+                    f"Your previous response:\n{original_response}\n\n"
+                    f"Quality scores that FAILED:\n{feedback_text}\n\n"
+                    f"Judge suggestion: {suggestion}\n\n"
+                    f"Tool results for reference:\n{json.dumps(tool_results, indent=2)}\n\n"
+                    "Write an improved response that fixes these issues:"
+                )
+            }
+        ],
+        tier="standard",
+        max_tokens=300
+    )
+
+    revised_text = revision_response.get("content", original_response)
+
     return {
         "current_state": ConversationStateEnum.REVISION,
-        "revision_count": state.get("revision_count", 0) + 1
+        "revision_count": state.get("revision_count", 0) + 1,
+        "agent_response": revised_text,
+        "total_tokens": state.get("total_tokens", 0) + revision_response.get("prompt_tokens", 0) + revision_response.get("completion_tokens", 0)
     }
 
+
 async def response_delivery_node(state: NexusState) -> dict:
+    """
+    Final delivery. Stores memory about this conversation
+    for future personalization.
+    """
+    user_id = state.get("user_id", "anonymous")
+    message = state.get("current_message", "")
+    response = state.get("agent_response", "")
+    analyzed = state.get("analyzed_input", {})
+    intent = analyzed.get("primary_intent", "unknown")
+
+    # Store episodic memory about this conversation
+    conversation_text = (
+        f"Customer asked: {message}\n"
+        f"Intent: {intent}\n"
+        f"AI response: {response}"
+    )
+    await episodic_memory.store(
+        user_id=user_id,
+        conversation_text=conversation_text,
+        metadata={"intent": intent, "resolved": True}
+    )
+
     return {"current_state": ConversationStateEnum.RESPONSE_DELIVERY}
+
 
 async def escalation_node(state: NexusState) -> dict:
     result = await escalation_agent.run(state)

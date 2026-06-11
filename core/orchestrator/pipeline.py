@@ -37,6 +37,7 @@ class Pipeline:
             "quality_scores": None,
             "revision_count": 0,
             "quality_passed": None,
+            "revision_suggestion": None,
             "user_context": None,
             "conversation_summary": "",
             "routing_decision": None,
@@ -58,6 +59,7 @@ class Pipeline:
         # Build the final response dict from the final state
         return {
             "session_id": session_id,
+            "conversation_id": initial_state["conversation_id"],
             "message_received": message,
             "response": final_state.get("agent_response") or "I apologize, but I am unable to assist at this moment.",
             "escalated": final_state.get("escalated", False),
@@ -65,6 +67,10 @@ class Pipeline:
             "handoff_package": final_state.get("handoff_package"),
             "agent_used": final_state.get("active_agent"),
             "tools_called": final_state.get("tools_called", []),
+            "quality_scores": final_state.get("quality_scores"),
+            "quality_passed": final_state.get("quality_passed"),
+            "revision_count": final_state.get("revision_count", 0),
+            "total_tokens": final_state.get("total_tokens", 0),
             "analysis": final_state.get("analyzed_input", {}),
             "status": "complete"
         }
