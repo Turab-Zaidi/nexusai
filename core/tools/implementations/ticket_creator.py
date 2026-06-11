@@ -2,7 +2,9 @@
 
 import random
 from datetime import datetime
+from langfuse.decorators import observe
 
+@observe(as_type="span", name="create_ticket")
 async def create_ticket(user_id: str, conversation_id: str, issue_summary: str, priority: str = "normal") -> dict:
     """
     Mock ticket creator (simulates Zendesk).

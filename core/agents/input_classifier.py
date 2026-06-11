@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 from .base_agent import BaseAgent, AgentResult
+from langfuse.decorators import observe
 
 
 @dataclass
@@ -92,6 +93,7 @@ class InputClassifier(BaseAgent):
             Language: ISO 639-1 code (en, es, fr, ar, etc)
     """
 
+    @observe(as_type="span", name="input_classifier")
     async def run(self, message: str) -> AgentResult:
         """
         Run all 4 analyses in parallel.

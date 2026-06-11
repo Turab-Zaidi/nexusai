@@ -1,6 +1,7 @@
 # core/agents/action_agent.py
 import json
 from .base_agent import BaseAgent, AgentResult
+from langfuse.decorators import observe
 from core.tools.implementations.order_lookup import lookup_order
 from core.tools.implementations.refund_processor import process_refund
 from core.tools.implementations.ticket_creator import create_ticket
@@ -18,6 +19,7 @@ class ActionAgent(BaseAgent):
             model_tier="standard" 
         )
 
+    @observe(as_type="span", name="action_agent")
     async def run(
         self,
         intent: str,

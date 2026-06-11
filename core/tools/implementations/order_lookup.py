@@ -3,7 +3,9 @@
 from sqlalchemy import select
 from infrastructure.db.connection import AsyncSessionLocal
 from infrastructure.db.models import Order
+from langfuse.decorators import observe
 
+@observe(as_type="span", name="lookup_order")
 async def lookup_order(order_id: str) -> dict:
     """
     Look up order in PostgreSQL database.

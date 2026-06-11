@@ -6,6 +6,7 @@ from sqlalchemy import select
 from infrastructure.db.connection import AsyncSessionLocal
 from infrastructure.db.models import KnowledgeEntry
 from .base_agent import BaseAgent, AgentResult
+from langfuse.decorators import observe
 
 class KnowledgeAgent(BaseAgent):
     """
@@ -22,6 +23,7 @@ class KnowledgeAgent(BaseAgent):
         )
         self.embedder = SentenceTransformer('all-MiniLM-L6-v2')
 
+    @observe(as_type="span", name="knowledge_agent")
     async def run(
         self,
         user_message: str,

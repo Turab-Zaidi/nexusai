@@ -4,7 +4,9 @@ from sqlalchemy import select
 from infrastructure.db.connection import AsyncSessionLocal
 from infrastructure.db.models import User, Order
 import uuid
+from langfuse.decorators import observe
 
+@observe(as_type="span", name="get_user_profile")
 async def get_user_profile(user_id: str) -> dict:
     """Fetch user profile and order count from database"""
 

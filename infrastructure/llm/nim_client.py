@@ -5,6 +5,7 @@ import time
 import json
 from openai import AsyncOpenAI
 from dotenv import load_dotenv
+from langfuse.decorators import observe, langfuse_context
 
 load_dotenv()
 
@@ -29,6 +30,7 @@ class NIMClient:
             "heavy": os.getenv("HEAVY_MODEL")
         }
 
+    @observe(as_type="generation")
     async def complete(
         self,
         messages: list[dict],
@@ -58,6 +60,17 @@ class NIMClient:
         try:
             response = await self.client.chat.completions.create(**kwargs)
             latency_ms = int((time.time() - start_time) * 1000)
+
+            # Update Langfuse observation
+            langfuse_context.update_current_observation(
+                model=model,
+                input=messages,
+                output=response.choices[0].message.content,
+                usage={
+                    "promptTokens": response.usage.prompt_tokens,
+                    "completionTokens": response.usage.completion_tokens
+                }
+            )
 
             return {
                 "content": response.choices[0].message.content,

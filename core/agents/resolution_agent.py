@@ -1,6 +1,7 @@
 # core/agents/resolution_agent.py
 import json
 from .base_agent import BaseAgent, AgentResult
+from langfuse.decorators import observe
 from core.tools.implementations.order_lookup import lookup_order
 from core.tools.implementations.refund_processor import process_refund
 from core.tools.implementations.ticket_creator import create_ticket
@@ -17,6 +18,7 @@ class ResolutionAgent(BaseAgent):
             model_tier="advanced" # Uses Llama 3.1 70B for complex reasoning
         )
 
+    @observe(as_type="span", name="resolution_agent")
     async def run(
         self,
         intent: str,

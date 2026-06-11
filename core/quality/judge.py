@@ -3,6 +3,7 @@
 import json
 from dataclasses import dataclass
 from infrastructure.llm.nim_client import nim_client
+from langfuse.decorators import observe
 
 @dataclass
 class EvaluationResult:
@@ -60,6 +61,7 @@ The 'overall_pass' is true ONLY IF ALL of these minimum scores are met:
         "tool_correctness": 4, "conversation_flow": 3
     }
 
+    @observe(as_type="span", name="quality_judge")
     async def evaluate(
         self,
         user_message: str,

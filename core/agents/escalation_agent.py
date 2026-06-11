@@ -2,6 +2,7 @@
 import json
 from typing import Dict, Any
 from .base_agent import BaseAgent, AgentResult
+from langfuse.decorators import observe
 
 class EscalationAgent(BaseAgent):
     """
@@ -14,6 +15,7 @@ class EscalationAgent(BaseAgent):
             model_tier="fast" # Uses Llama 3.1 8B for fast summarization
         )
 
+    @observe(as_type="span", name="escalation_agent")
     async def run(self, state: Dict[str, Any]) -> AgentResult:
         # 1. Gather all context from the state
         user_message = state.get("current_message", "")

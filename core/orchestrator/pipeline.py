@@ -3,15 +3,24 @@
 import uuid
 from typing import Dict, Any
 from .state_machine import create_graph
+from langfuse.decorators import observe, langfuse_context
 
 # We compile the graph once when this module is loaded
 app = create_graph()
 
 class Pipeline:
+    @observe()
     async def process(self, message: str, session_id: str, user_id: str) -> Dict[str, Any]:
         """
         Process a single message through the LangGraph state machine.
         """
+        langfuse_context.update_current_trace(
+            name="nexusai_conversation",
+            session_id=session_id,
+            user_id=user_id,
+            input=message
+        )
+        
         initial_state = {
             "conversation_id": str(uuid.uuid4()),
             "user_id": user_id,
@@ -40,6 +49,11 @@ class Pipeline:
 
         # Run the LangGraph state machine
         final_state = await app.ainvoke(initial_state)
+
+        langfuse_context.update_current_trace(
+            output=final_state.get("agent_response"),
+            tags=[final_state.get("analyzed_input", {}).get("primary_intent", "unknown")]
+        )
 
         # Build the final response dict from the final state
         return {

@@ -3,7 +3,9 @@
 import uuid
 import random
 from datetime import datetime
+from langfuse.decorators import observe
 
+@observe(as_type="span", name="process_refund")
 async def process_refund(order_id: str, amount: float, reason: str) -> dict:
     """
     Mock refund processor (simulates Stripe).
