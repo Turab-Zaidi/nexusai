@@ -322,7 +322,11 @@ async def knowledge_retrieval_node(state: NexusState) -> dict:
         user_context=user_context.get("context_string", "")
     )
     response_text = result.output.get("response", "")
-    print(f"[KNOWLEDGE] Agent returned: '{response_text[:100]}...' (grounded: {result.output.get('grounded')})")
+    print(f"\n{'='*60}")
+    print(f"[KNOWLEDGE AGENT]")
+    print(f"  Intent   : {intent}")
+    print(f"  Response : {response_text[:200]}")
+    print(f"{'='*60}\n")
 
     if response_text:
         await redis_cache.set(intent=intent, query=message, response=response_text)
@@ -397,12 +401,24 @@ async def action_execution_node(state: NexusState) -> dict:
         user_message=message,
         user_context=user_context.get("context_string", "")
     )
+    response_text = result.output.get("response", "")
+    tools_called = result.output.get("tools_called", [])
+    tool_results = result.output.get("tool_results", [])
+    tool_names = [t.get("tool_name", str(t)) if isinstance(t, dict) else str(t) for t in tools_called]
+    tool_ok = all(r.get("ok") for r in tool_results if isinstance(r, dict)) if tool_results else True
+    print(f"\n{'='*60}")
+    print(f"[ACTION AGENT]")
+    print(f"  Intent   : {intent}")
+    print(f"  Tools    : {', '.join(tool_names) or 'None'}")
+    print(f"  DB OK    : {tool_ok}")
+    print(f"  Response : {response_text[:200]}")
+    print(f"{'='*60}\n")
     return {
         "current_state": ConversationStateEnum.ACTION_EXECUTION.value,
         "active_agent": "action_agent",
-        "agent_response": result.output.get("response", ""),
-        "tools_called": result.output.get("tools_called", []),
-        "tool_results": result.output.get("tool_results", []),
+        "agent_response": response_text,
+        "tools_called": tools_called,
+        "tool_results": tool_results,
         "total_tokens": (state.total_tokens or 0) + result.tokens_used
     }
 
@@ -421,15 +437,25 @@ async def quality_check_node(state: NexusState) -> dict:
         intent=intent
     )
 
+    scores = {
+        "factual_accuracy": evaluation.factual_accuracy,
+        "helpfulness": evaluation.helpfulness,
+        "policy_compliance": evaluation.policy_compliance,
+        "tool_correctness": evaluation.tool_correctness,
+        "conversation_flow": evaluation.conversation_flow
+    }
+    verdict = "✅ PASSED" if evaluation.overall_pass else "❌ FAILED"
+    print(f"\n{'='*60}")
+    print(f"[QUALITY JUDGE] {verdict}")
+    print(f"  Scores   : {scores}")
+    print(f"  Reason   : {evaluation.reasoning}")
+    if not evaluation.overall_pass:
+        print(f"  Feedback : {evaluation.revision_suggestion}")
+    print(f"{'='*60}\n")
+
     return {
         "current_state": ConversationStateEnum.QUALITY_CHECK.value,
-        "quality_scores": {
-            "factual_accuracy": evaluation.factual_accuracy,
-            "helpfulness": evaluation.helpfulness,
-            "policy_compliance": evaluation.policy_compliance,
-            "tool_correctness": evaluation.tool_correctness,
-            "conversation_flow": evaluation.conversation_flow
-        },
+        "quality_scores": scores,
         "quality_passed": evaluation.overall_pass,
         "revision_suggestion": evaluation.revision_suggestion
     }
@@ -470,11 +496,17 @@ async def revision_node(state: NexusState) -> dict:
     if not new_response:
         new_response = original_response
 
+    print(f"\n{'='*60}")
+    print(f"[REVISION NODE] Attempt #{(state.revision_count or 0) + 1}")
+    print(f"  Feedback : {feedback}")
+    print(f"  Revised  : {new_response[:200]}")
+    print(f"{'='*60}\n")
+
     return {
         "current_state": ConversationStateEnum.REVISION.value,
         "agent_response": new_response,
         "revision_count": (state.revision_count or 0) + 1,
-        "quality_passed": None, 
+        "quality_passed": None,
         "revision_suggestion": None
     }
 
@@ -502,7 +534,13 @@ async def escalation_node(state: NexusState) -> dict:
         f"Reference: {state.conversation_id or 'N/A'}"
     )
     
-    print(f"[ESCALATION] Reason: {reason} | User: {state.user_id} | Conv: {state.conversation_id}")
+    print(f"\n{'='*60}")
+    print(f"[ESCALATION] 🚨 ESCALATED")
+    print(f"  Reason   : {reason}")
+    print(f"  Intent   : {intent}")
+    print(f"  Flags    : {risk_flags}")
+    print(f"  User     : {state.user_id}")
+    print(f"{'='*60}\n")
     
     return {
         "current_state": ConversationStateEnum.ESCALATION.value,
