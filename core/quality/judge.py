@@ -36,8 +36,9 @@ class EvaluationResult:
 class QualityJudge:
     """
     Evaluates agent responses before delivery.
-    Uses a fast model on purpose - a different model
-    from the generating model helps avoid confirmation bias.
+    Intentionally uses the HEAVY tier (Llama 405B) — a larger,
+    different model from the standard-tier generators (GPT-OSS 120B)
+    to reduce confirmation bias in evaluation.
     """
 
     JUDGE_SYSTEM = """You are the Compliance & Quality Evaluator for Nexus Bank's AI Support Agent.
@@ -116,16 +117,15 @@ Please evaluate the response based on the 5 criteria and provide your JSON outpu
                 {"role": "user", "content": evaluation_input}
             ],
             pydantic_model=JudgeSchema,
-            tier="standard",  # Use standard model for better scoring accuracy
+            tier="heavy",  # Heavy model (Llama 405B) intentionally differs from standard-tier generators
             temperature=0.0
         )
 
         scores_data = result.get("parsed")
 
         if not scores_data:
-            # If JSON parsing or the structure is wrong, default to a safe "pass"
-            # to avoid blocking all responses due to a judge failure.
-            return self._default_pass()
+            # If JSON parsing or the structure is wrong, escalate — never silently pass
+            return self._default_escalate()
 
         # Re-check the pass condition here to be absolutely sure, overriding the LLM if needed
         scores = scores_data.scores
@@ -150,10 +150,11 @@ Please evaluate the response based on the 5 criteria and provide your JSON outpu
             revision_suggestion=scores_data.revision_suggestion
         )
 
-    def _default_pass(self) -> EvaluationResult:
+    def _default_escalate(self) -> EvaluationResult:
+        """Safe fallback: if the judge itself fails, escalate rather than silently pass."""
         return EvaluationResult(
-            factual_accuracy=5, helpfulness=5, policy_compliance=5,
-            tool_correctness=5, conversation_flow=5, overall_pass=True,
-            reasoning="Judge LLM failed to return valid JSON, defaulting to pass.",
-            revision_suggestion=None
+            factual_accuracy=1, helpfulness=1, policy_compliance=1,
+            tool_correctness=1, conversation_flow=1, overall_pass=False,
+            reasoning="Judge LLM failed to return valid JSON. Escalating as a safe fallback.",
+            revision_suggestion="The quality judge encountered an error. Route to human support."
         )

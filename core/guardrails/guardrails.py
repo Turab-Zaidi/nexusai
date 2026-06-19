@@ -71,8 +71,8 @@ class Guardrails:
                 metadata["out_of_scope"] = True
                 return (
                     False,
-                    "I appreciate your question, but I'm specifically designed for customer support. "
-                    "I can help with orders, refunds, shipping, and account questions. "
+                    "I appreciate your question, but I'm specifically designed for Nexus Bank support. "
+                    "I can help with account management, card services, transactions, disputes, and banking policy questions. "
                     "For other topics, please consult the appropriate professional.",
                     metadata
                 )

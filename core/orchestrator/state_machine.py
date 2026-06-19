@@ -307,7 +307,7 @@ async def knowledge_retrieval_node(state: NexusState) -> dict:
 
     print(f"[KNOWLEDGE] Received intent: '{intent}' for message: '{message}'")
 
-    cached_response = await redis_cache.get(intent=intent, query=message)
+    cached_response = await redis_cache.get(intent=intent, query=f"{state.user_id}:{message}")
     if cached_response:
         return {
             "current_state": ConversationStateEnum.KNOWLEDGE_RETRIEVAL.value,
@@ -340,11 +340,51 @@ async def action_execution_node(state: NexusState) -> dict:
     analyzed = state.analyzed_input
     user_context = state.user_context or {}
 
-    # In our implementation, we used dicts previously. Now it's a Pydantic object
     intent = analyzed.primary_intent if analyzed else "unclear"
-    # Button bypass logic check (we would need to add intent_override if we want to keep it, but it's not in the Pydantic schema)
-    # We will just pass the entities dict
     entities = analyzed.entities.model_dump() if (analyzed and analyzed.entities) else {}
+
+    # ── Confirmation gate for irreversible actions ──────────────────────────
+    # These actions mutate the database in ways that are hard or impossible to undo.
+    # We pause the graph and ask the user to confirm before executing.
+    IRREVERSIBLE_INTENTS = {
+        "report_fraud":   "permanently block your card",
+        "freeze_card":    "freeze your card",
+        "submit_dispute": "submit a dispute for this transaction",
+        "fee_waiver":     "waive this fee",
+    }
+
+    # Only ask for confirmation on a fresh turn (not after the user already confirmed)
+    already_confirmed = state.messages and any(
+        msg.get("role") == "user" and msg.get("content", "").strip().lower() in ["yes", "confirm", "proceed", "yeah", "yep", "sure"]
+        for msg in (state.messages[-2:] if len(state.messages) >= 2 else [])
+    )
+
+    if intent in IRREVERSIBLE_INTENTS and not already_confirmed:
+        action_label = IRREVERSIBLE_INTENTS[intent]
+        confirmation_prompt = (
+            f"Just to confirm — you'd like me to **{action_label}**. "
+            f"This action cannot easily be undone. Please reply **yes** to proceed or **no** to cancel."
+        )
+        user_reply = interrupt(confirmation_prompt)
+
+        current_messages = list(state.messages or [])
+        current_messages.append({"role": "assistant", "content": confirmation_prompt})
+        current_messages.append({"role": "user", "content": user_reply})
+
+        # If user cancels, end gracefully without executing
+        if user_reply.strip().lower() in ["no", "cancel", "nope", "stop", "nevermind", "never mind"]:
+            return {
+                "current_state": ConversationStateEnum.ACTION_EXECUTION.value,
+                "active_agent": "action_agent",
+                "agent_response": "No problem! I've cancelled that action. Is there anything else I can help you with?",
+                "tools_called": [],
+                "tool_results": [],
+                "messages": current_messages,
+            }
+
+        # User confirmed — update message history and proceed to execution below
+        state = state.model_copy(update={"messages": current_messages, "current_message": user_reply})
+    # ── End confirmation gate ────────────────────────────────────────────────
 
     result = await action_agent.run(
         intent=intent,

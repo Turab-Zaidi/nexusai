@@ -113,15 +113,21 @@ async def search_transactions(user_id: str, merchant_name: str = None, amount: f
 
 
 async def freeze_card(card_id: str, user_id: str) -> dict:
-    """Freeze a card. Validates ownership before executing."""
+    """Freeze a card. Validates ownership before executing.
+    Accepts card_id as full ID ('CARD-1234') or last 4 digits ('1234').
+    """
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Card).where(Card.id == card_id, Card.user_id == user_id)
-        )
+        # Normalize: accept either 'CARD-1234' or '1234'
+        query = select(Card).where(Card.user_id == user_id)
+        if card_id and not card_id.startswith("CARD-") and len(card_id) <= 4:
+            query = query.where(Card.last_4_digits == card_id)
+        else:
+            query = query.where(Card.id == card_id)
+        result = await session.execute(query)
         card = result.scalar_one_or_none()
 
         if not card:
-            return {"ok": False, "data": None, "error": f"Card {card_id} not found or does not belong to this user."}
+            return {"ok": False, "data": None, "error": f"Card '{card_id}' not found or does not belong to this user."}
 
         if card.status == "frozen":
             return {"ok": False, "data": None, "error": f"Card ending in {card.last_4_digits} is already frozen."}
@@ -130,14 +136,14 @@ async def freeze_card(card_id: str, user_id: str) -> dict:
             return {"ok": False, "data": None, "error": "This card has already been reported stolen and cannot be modified."}
 
         await session.execute(
-            update(Card).where(Card.id == card_id).values(status="frozen")
+            update(Card).where(Card.id == card.id).values(status="frozen")
         )
         await session.commit()
 
         return {
             "ok": True,
             "data": {
-                "card_id": card_id,
+                "card_id": card.id,
                 "last_4": card.last_4_digits,
                 "card_type": card.card_type,
                 "new_status": "frozen"
@@ -147,15 +153,20 @@ async def freeze_card(card_id: str, user_id: str) -> dict:
 
 
 async def unfreeze_card(card_id: str, user_id: str) -> dict:
-    """Unfreeze a card. Validates ownership before executing."""
+    """Unfreeze a card. Validates ownership before executing.
+    Accepts card_id as full ID ('CARD-1234') or last 4 digits ('1234').
+    """
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Card).where(Card.id == card_id, Card.user_id == user_id)
-        )
+        query = select(Card).where(Card.user_id == user_id)
+        if card_id and not card_id.startswith("CARD-") and len(card_id) <= 4:
+            query = query.where(Card.last_4_digits == card_id)
+        else:
+            query = query.where(Card.id == card_id)
+        result = await session.execute(query)
         card = result.scalar_one_or_none()
 
         if not card:
-            return {"ok": False, "data": None, "error": f"Card {card_id} not found or does not belong to this user."}
+            return {"ok": False, "data": None, "error": f"Card '{card_id}' not found or does not belong to this user."}
 
         if card.status == "active":
             return {"ok": False, "data": None, "error": f"Card ending in {card.last_4_digits} is already active."}
@@ -164,14 +175,14 @@ async def unfreeze_card(card_id: str, user_id: str) -> dict:
             return {"ok": False, "data": None, "error": "This card was reported stolen and cannot be unfrozen."}
 
         await session.execute(
-            update(Card).where(Card.id == card_id).values(status="active")
+            update(Card).where(Card.id == card.id).values(status="active")
         )
         await session.commit()
 
         return {
             "ok": True,
             "data": {
-                "card_id": card_id,
+                "card_id": card.id,
                 "last_4": card.last_4_digits,
                 "card_type": card.card_type,
                 "new_status": "active"
@@ -181,28 +192,33 @@ async def unfreeze_card(card_id: str, user_id: str) -> dict:
 
 
 async def report_stolen_card(card_id: str, user_id: str) -> dict:
-    """Permanently block a card by reporting it stolen."""
+    """Permanently block a card by reporting it stolen.
+    Accepts card_id as full ID ('CARD-1234') or last 4 digits ('1234').
+    """
     async with AsyncSessionLocal() as session:
-        result = await session.execute(
-            select(Card).where(Card.id == card_id, Card.user_id == user_id)
-        )
+        query = select(Card).where(Card.user_id == user_id)
+        if card_id and not card_id.startswith("CARD-") and len(card_id) <= 4:
+            query = query.where(Card.last_4_digits == card_id)
+        else:
+            query = query.where(Card.id == card_id)
+        result = await session.execute(query)
         card = result.scalar_one_or_none()
 
         if not card:
-            return {"ok": False, "data": None, "error": f"Card {card_id} not found or does not belong to this user."}
+            return {"ok": False, "data": None, "error": f"Card '{card_id}' not found or does not belong to this user."}
 
         if card.status == "reported_stolen":
             return {"ok": False, "data": None, "error": "This card has already been reported stolen."}
 
         await session.execute(
-            update(Card).where(Card.id == card_id).values(status="reported_stolen")
+            update(Card).where(Card.id == card.id).values(status="reported_stolen")
         )
         await session.commit()
 
         return {
             "ok": True,
             "data": {
-                "card_id": card_id,
+                "card_id": card.id,
                 "last_4": card.last_4_digits,
                 "card_type": card.card_type,
                 "new_status": "reported_stolen"
