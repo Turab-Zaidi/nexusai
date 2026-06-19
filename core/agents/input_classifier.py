@@ -135,7 +135,7 @@ class InputClassifier(BaseAgent):
             Detect critical risk flags and evaluate the complexity of the request.
 
             FLAGS TO DETECT:
-            - 'lawsuit_threat': User mentions lawyers, suing, or legal action against the bank. (DO NOT flag for general complaints).
+            - 'lawsuit_threat': User explicitly mentions lawyers, suing, or taking legal action against the bank. NOTE: The word "dispute" in a banking context means a transaction dispute — NOT a legal threat. Do NOT flag "I want to dispute a charge" as a lawsuit threat.
             - 'fraud_signal': User claims unauthorized access, stolen identity, or unrecognized transactions.
             - 'explicit_human_request': User specifically asks for a "human", "agent", "manager", or "representative".
             - 'suicide_risk' / 'hardship': User threatens self-harm or extreme financial desperation.
@@ -152,6 +152,10 @@ class InputClassifier(BaseAgent):
             -> flags: ["lawsuit_threat"], complexity: 1
             User: "Someone hacked my account and spent $500!" 
             -> flags: ["fraud_signal"], complexity: 3
+            User: "I want to dispute the charge at Uber for $143." 
+            -> flags: [], complexity: 2
+            User: "I want to dispute this transaction." 
+            -> flags: [], complexity: 2
     """
 
     @observe(as_type="span", name="input_classifier")
