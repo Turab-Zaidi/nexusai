@@ -384,8 +384,9 @@ async def action_execution_node(state: NexusState) -> dict:
                 "messages": current_messages,
             }
 
-        # User confirmed — update message history and proceed to execution below
-        state = state.model_copy(update={"messages": current_messages, "current_message": user_reply})
+        # User confirmed — update message history but keep original current_message
+        # so the Quality Judge evaluates against the original request, not "yes"
+        state = state.model_copy(update={"messages": current_messages})
     # ── End confirmation gate ────────────────────────────────────────────────
 
     result = await action_agent.run(
