@@ -325,7 +325,8 @@ async def knowledge_retrieval_node(state: NexusState) -> dict:
     print(f"\n{'='*60}")
     print(f"[KNOWLEDGE AGENT]")
     print(f"  Intent   : {intent}")
-    print(f"  Response : {response_text[:200]}")
+    safe_response = response_text[:200].encode('ascii', 'replace').decode('ascii')
+    print(f"  Response : {safe_response}")
     print(f"{'='*60}\n")
 
     if response_text:
@@ -411,7 +412,8 @@ async def action_execution_node(state: NexusState) -> dict:
     print(f"  Intent   : {intent}")
     print(f"  Tools    : {', '.join(tool_names) or 'None'}")
     print(f"  DB OK    : {tool_ok}")
-    print(f"  Response : {response_text[:200]}")
+    safe_response = response_text[:200].encode('ascii', 'replace').decode('ascii')
+    print(f"  Response : {safe_response}")
     print(f"{'='*60}\n")
     return {
         "current_state": ConversationStateEnum.ACTION_EXECUTION.value,
@@ -444,7 +446,7 @@ async def quality_check_node(state: NexusState) -> dict:
         "tool_correctness": evaluation.tool_correctness,
         "conversation_flow": evaluation.conversation_flow
     }
-    verdict = "✅ PASSED" if evaluation.overall_pass else "❌ FAILED"
+    verdict = "PASSED" if evaluation.overall_pass else "FAILED"
     print(f"\n{'='*60}")
     print(f"[QUALITY JUDGE] {verdict}")
     print(f"  Scores   : {scores}")
@@ -499,7 +501,8 @@ async def revision_node(state: NexusState) -> dict:
     print(f"\n{'='*60}")
     print(f"[REVISION NODE] Attempt #{(state.revision_count or 0) + 1}")
     print(f"  Feedback : {feedback}")
-    print(f"  Revised  : {new_response[:200]}")
+    safe_response = new_response[:200].encode('ascii', 'replace').decode('ascii')
+    print(f"  Revised  : {safe_response}")
     print(f"{'='*60}\n")
 
     return {
@@ -535,7 +538,7 @@ async def escalation_node(state: NexusState) -> dict:
     )
     
     print(f"\n{'='*60}")
-    print(f"[ESCALATION] 🚨 ESCALATED")
+    print(f"[ESCALATION] ESCALATED")
     print(f"  Reason   : {reason}")
     print(f"  Intent   : {intent}")
     print(f"  Flags    : {risk_flags}")
