@@ -354,8 +354,10 @@ async def action_execution_node(state: NexusState) -> dict:
     }
 
     # Only ask for confirmation on a fresh turn (not after the user already confirmed)
+    def _get_role(msg): return msg.get("role") if isinstance(msg, dict) else getattr(msg, "type", "")
+    def _get_content(msg): return msg.get("content", "") if isinstance(msg, dict) else getattr(msg, "content", "")
     already_confirmed = state.messages and any(
-        msg.get("role") == "user" and msg.get("content", "").strip().lower() in ["yes", "confirm", "proceed", "yeah", "yep", "sure"]
+        _get_role(msg) in ("user", "human") and _get_content(msg).strip().lower() in ["yes", "confirm", "proceed", "yeah", "yep", "sure"]
         for msg in (state.messages[-2:] if len(state.messages) >= 2 else [])
     )
 
