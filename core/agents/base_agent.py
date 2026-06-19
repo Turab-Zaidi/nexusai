@@ -79,6 +79,25 @@ class BaseAgent(ABC):
             tier=self.model_tier
         )
 
+    async def call_llm_pydantic(
+        self,
+        system_prompt: str,
+        user_message: str,
+        pydantic_model
+    ) -> dict:
+        """LLM call expecting Pydantic enforced response"""
+
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_message}
+        ]
+
+        return await self.nim.complete_pydantic(
+            messages=messages,
+            pydantic_model=pydantic_model,
+            tier=self.model_tier
+        )
+
     def make_result(
         self,
         success: bool,

@@ -1,66 +1,65 @@
 # core/orchestrator/state.py
 
 from typing import Optional, Any, Annotated
-from dataclasses import dataclass, field
 from enum import Enum
-from typing import TypedDict
+from pydantic import BaseModel, Field
 import operator
 
 from langgraph.graph.message import add_messages
+from core.agents.input_classifier import AnalyzedInput
 
 
 class ConversationStateEnum(str, Enum):
     STARTUP = "STARTUP"
-    GREETING = "GREETING"
+    CONTEXT_LOADER = "CONTEXT_LOADER"
     INTENT_CLASSIFICATION = "INTENT_CLASSIFICATION"
     COLLECTING_INFO = "COLLECTING_INFO"
     KNOWLEDGE_RETRIEVAL = "KNOWLEDGE_RETRIEVAL"
     ACTION_EXECUTION = "ACTION_EXECUTION"
-    RESOLUTION_EXECUTION = "RESOLUTION_EXECUTION"
     QUALITY_CHECK = "QUALITY_CHECK"
     REVISION = "REVISION"
-    RESPONSE_DELIVERY = "RESPONSE_DELIVERY"
     ESCALATION = "ESCALATION"
     END = "END"
 
 
-class NexusState(TypedDict):
+class NexusState(BaseModel):
     # Identifiers
-    conversation_id: str
-    user_id: str
-    session_id: str
-    channel: str
+    conversation_id: str = ""
+    user_id: str = ""
+    session_id: str = ""
+    channel: str = "web"
 
-    messages: Annotated[list, add_messages]
+    # LangGraph Reducer for messages
+    messages: Annotated[list, add_messages] = Field(default_factory=list)
 
-    current_message: str
-    current_state: str
-    analyzed_input: Optional[dict]  # AnalyzedInput from Day 5 as a dict
+    current_message: str = ""
+    current_state: str = ""
+    analyzed_input: Optional[AnalyzedInput] = None
 
     # Agent work
-    active_agent: Optional[str]
-    agent_response: Optional[str]
-    tools_called: list
-    tool_results: list
+    active_agent: Optional[str] = None
+    agent_response: Optional[str] = None
+    tools_called: list = Field(default_factory=list)
+    tool_results: list = Field(default_factory=list)
 
     # Quality
-    quality_scores: Optional[dict]
-    revision_count: int
-    quality_passed: Optional[bool]
-    revision_suggestion: Optional[str]
+    quality_scores: Optional[dict] = None
+    revision_count: int = 0
+    quality_passed: Optional[bool] = None
+    revision_suggestion: Optional[str] = None
 
     # Memory and context
-    user_context: Optional[dict]
-    conversation_summary: str
+    user_context: Optional[dict] = None
+    conversation_summary: str = ""
 
     # Routing
-    routing_decision: Optional[str]
+    routing_decision: Optional[str] = None
 
     # Escalation
-    escalated: bool
-    escalation_reason: Optional[str]
-    handoff_package: Optional[dict]
+    escalated: bool = False
+    escalation_reason: Optional[str] = None
+    handoff_package: Optional[dict] = None
 
     # Tracking
-    turn_count: int
-    total_tokens: int
+    turn_count: int = 0
+    total_tokens: int = 0

@@ -1,137 +1,169 @@
-# core/agents/action_agent.py
 import json
+import logging
 from .base_agent import BaseAgent, AgentResult
-from langfuse.decorators import observe
-from core.tools.implementations.order_lookup import lookup_order
-from core.tools.implementations.refund_processor import process_refund
-from core.tools.implementations.ticket_creator import create_ticket
+from core.tools.implementations.fintech_tools import (
+    get_user_profile,
+    get_recent_transactions,
+    freeze_card,
+    unfreeze_card,
+    report_stolen_card,
+    submit_dispute,
+    waive_fee,
+    analyze_spending,
+    search_transactions
+)
+
 
 class ActionAgent(BaseAgent):
     """
-    Executes tools and generates responses based on tool results.
-    Handles: order lookup, refunds, tickets.
+    Executes FinTech actions against the SQLite database.
+    Handles: freeze_card, unfreeze_card, submit_dispute, fee_waiver,
+             check_transaction, report_fraud, request_virtual_card.
     """
 
-    APPROVAL_THRESHOLD = 500.0  
     def __init__(self):
-        super().__init__(
-            name="action_agent",
-            model_tier="standard" 
-        )
+        super().__init__(name="action_agent", model_tier="standard")
 
-    @observe(as_type="span", name="action_agent")
     async def run(
         self,
         intent: str,
         entities: dict,
         user_id: str,
         conversation_id: str,
-        user_message: str
+        user_message: str,
+        user_context: str = ""
     ) -> AgentResult:
 
         tools_called = []
         tool_results = []
-        final_response = ""
-        llm_call_details = {}
 
-        # ── Handle intents that require an order_id ────────────────────────
-        if intent in ["track_order", "get_refund", "cancel_order"]:
-            order_id = entities.get("order_id")
-            if not order_id:
-                # If the entity wasn't found, ask the user for it.
-                return self._missing_entity_result("order number")
-
-            # Call the order lookup tool
-            order_result = await lookup_order(order_id)
-            tools_called.append({"tool_name": "lookup_order", "input": {"order_id": order_id}})
-            tool_results.append(order_result)
-
-            if not order_result["ok"]:
-                # The tool returned an error (e.g., order not found)
-                llm_response = await self._generate_error_response(user_message, order_result["error"])
-                return self.make_result(
-                    success=True,
-                    output={"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results},
-                    llm_response=llm_response
-                )
-
-            order_data = order_result["data"]
-
-            # If the intent is a refund, proceed with refund logic
-            if intent == "get_refund":
-                if not order_data["refund_eligible"]:
-                    context = "Order is not eligible for a refund."
-                elif order_data["amount"] > self.APPROVAL_THRESHOLD:
-                    context = f"Refund of ${order_data['amount']} is above the ${self.APPROVAL_THRESHOLD} threshold and requires manager approval. A ticket has been created."
-                else:
-                    # Process the refund directly
-                    refund_result = await process_refund(order_id, order_data["amount"], "Customer request")
-                    tools_called.append({"tool_name": "process_refund", "input": {"order_id": order_id, "amount": order_data["amount"]}})
-                    tool_results.append(refund_result)
-                    context = "Refund processed successfully." if refund_result["ok"] else f"Refund failed: {refund_result['error']}"
-                
-                llm_response = await self._generate_response(user_message, tool_results, context)
-                return self.make_result(
-                    success=True,
-                    output={"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results},
-                    llm_response=llm_response
-                )
+        # ── FREEZE / UNFREEZE CARD ─────────────────────────────────────────
+        if intent in ["freeze_card", "unfreeze_card", "report_fraud"]:
+            card_id = entities.get("card_id")
             
-            # For other order-related intents (track_order, etc.)
-            llm_response = await self._generate_response(user_message, tool_results)
-            return self.make_result(
-                success=True,
-                output={"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results},
-                llm_response=llm_response
-            )
+            if intent == "freeze_card":
+                result = await freeze_card(card_id=card_id, user_id=user_id)
+                tool_name = "freeze_card"
+                context_success = "Card has been frozen successfully."
+                context_error = f"Could not freeze card: {result['error']}"
+            elif intent == "unfreeze_card":
+                result = await unfreeze_card(card_id=card_id, user_id=user_id)
+                tool_name = "unfreeze_card"
+                context_success = "Card has been unfrozen successfully."
+                context_error = f"Could not unfreeze card: {result['error']}"
+            else: # report_fraud
+                result = await report_stolen_card(card_id=card_id, user_id=user_id)
+                tool_name = "report_stolen_card"
+                context_success = "Card has been permanently blocked and reported stolen."
+                context_error = f"Could not report card: {result['error']}"
 
-        llm_response = await self._generate_error_response(user_message, f"The intent '{intent}' is not handled by this agent.")
+            tools_called.append({"tool_name": tool_name, "input": {"card_id": card_id, "user_id": user_id}})
+            tool_results.append(result)
+            context = context_success if result["ok"] else context_error
+            llm_response = await self._generate_response(user_message, tool_results, user_context, context)
+            return self.make_result(result["ok"], {"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results}, llm_response)
+
+        # ── SUBMIT DISPUTE ─────────────────────────────────────────────────
+        if intent == "submit_dispute":
+            transaction_id = entities.get("transaction_id")
+            
+            result = await submit_dispute(
+                transaction_id=transaction_id,
+                user_id=user_id,
+                reason=entities.get("reason", "Customer-initiated dispute")
+            )
+            tools_called.append({"tool_name": "submit_dispute", "input": {"transaction_id": transaction_id}})
+            tool_results.append(result)
+            context = f"Dispute submitted. Reference: {result['data'].get('reference')}" if result["ok"] else f"Dispute failed: {result['error']}"
+            llm_response = await self._generate_response(user_message, tool_results, user_context, context)
+            return self.make_result(result["ok"], {"response": llm_response.get("content") or "Error: Blank response from AI", "tools_called": tools_called, "tool_results": tool_results}, llm_response)
+
+        # ── FEE WAIVER ────────────────────────────────────────────────────
+        if intent == "fee_waiver":
+            transaction_id = entities.get("transaction_id")
+            
+            result = await waive_fee(transaction_id=transaction_id, user_id=user_id)
+            tools_called.append({"tool_name": "waive_fee", "input": {"transaction_id": transaction_id, "user_id": user_id}})
+            tool_results.append(result)
+            context = f"Fee of ${result['data'].get('fee_amount')} waived. Reference: {result['data'].get('reference')}" if result["ok"] else f"Fee waiver failed: {result['error']}"
+            llm_response = await self._generate_response(user_message, tool_results, user_context, context)
+            return self.make_result(result["ok"], {"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results}, llm_response)
+
+        # ── CHECK TRANSACTION / ACCOUNT ───────────────────────────────────
+        if intent in ["check_transaction", "account_info"]:
+            profile = await get_user_profile(user_id)
+            
+            merchant = entities.get("merchant_name")
+            amount = entities.get("amount")
+            
+            if intent == "check_transaction" and (merchant or amount):
+                txns = await search_transactions(user_id, merchant_name=merchant, amount=amount)
+                tool_name = "search_transactions"
+                tool_input = {"user_id": user_id, "merchant_name": merchant, "amount": amount}
+            else:
+                txns = await get_recent_transactions(user_id, limit=5)
+                tool_name = "get_recent_transactions"
+                tool_input = {"user_id": user_id}
+                
+            tools_called.extend([
+                {"tool_name": "get_user_profile", "input": {"user_id": user_id}},
+                {"tool_name": tool_name, "input": tool_input}
+            ])
+            tool_results.extend([profile, txns])
+            llm_response = await self._generate_response(user_message, tool_results, user_context)
+            return self.make_result(True, {"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results}, llm_response)
+
+        # ── FINANCIAL ANALYSIS ────────────────────────────────────────────
+        if intent == "financial_analysis":
+            days = entities.get("time_period_days") or 30
+            category = entities.get("expense_category")
+            
+            result = await analyze_spending(user_id=user_id, days=days, category=category)
+            tools_called.append({"tool_name": "analyze_spending", "input": {"user_id": user_id, "days": days, "category": category}})
+            tool_results.append(result)
+            
+            context = "Financial analysis complete."
+            llm_response = await self._generate_response(user_message, tool_results, user_context, context)
+            return self.make_result(result["ok"], {"response": llm_response["content"], "tools_called": tools_called, "tool_results": tool_results}, llm_response)
+
+        # ── UNHANDLED INTENT ───────────────────────────────────────────────
         return self.make_result(
-            success=False,
-            output={"response": "I'll need to connect you with our support team to handle this request.", "tools_called": [], "tool_results": []},
-            llm_response=llm_response,
+            False,
+            {"response": "I'll connect you with a specialist for that request.", "tools_called": [], "tool_results": []},
             error="Intent not handled by action agent"
         )
 
+    async def _generate_response(
+        self,
+        user_message: str,
+        tool_results: list,
+        user_context: str = "",
+        context: str = None
+    ) -> dict:
+        context_block = f"\nACTION RESULT: {context}" if context else ""
+        history_block = f"\nCUSTOMER HISTORY:\n{user_context}" if user_context else ""
 
-    async def _generate_response(self, user_message: str, tool_results: list, context: str = None) -> dict:
-        context_info = f"Additional Context: {context}\n" if context else ""
-        
-        return await self.call_llm(
+        result = await self.call_llm(
             system_prompt=(
-                "You are a helpful customer support agent. "
-                "Generate a clear, empathetic response based on the "
-                "tool results provided. Be specific with details like "
-                "amounts, dates, and order status. Keep the response under 100 words."
-            ),
-            user_message=(
-                f"Customer message: '{user_message}'\n\n"
-                f"Tool Results:\n{json.dumps(tool_results, indent=2)}\n"
-                f"{context_info}"
-            )
-        )
-
-    async def _generate_error_response(self, user_message: str, error: str) -> dict:
-        return await self.call_llm(
-            system_prompt=(
-                "You are a helpful customer support agent. "
-                "Apologize that you could not complete the request due to an error. "
-                "Explain the error clearly and suggest what the user can do next (e.g., check the order number)."
+                "You are the Action Response Generator for Nexus Bank. "
+                "Your job is to read the raw JSON 'Tool Results' that the backend has already executed on the user's behalf, "
+                "and translate those results into a professional, empathetic response to the customer.\n\n"
+                "UNDERSTANDING TOOL RESULTS:\n"
+                "- If 'ok': true, the action (e.g., freezing a card, waiving a fee) succeeded. Confirm this to the user and provide any reference numbers.\n"
+                "- If 'ok': false, the action failed (e.g., card already frozen). Politely explain the error.\n"
+                "- For data tools (like financial analysis or checking transactions), summarize the sums, counts, and dates naturally.\n\n"
+                "CRITICAL RULES:\n"
+                "1. NEVER promise or guarantee outcomes that are not explicitly confirmed in the Tool Results.\n"
+                "2. Be specific. Always quote exact amounts, the last 4 digits of cards, and reference numbers found in the JSON.\n"
+                "3. NO FINANCIAL ADVICE. When summarizing financial analysis, only provide objective facts (e.g., 'You spent $400 on dining'). Do NOT provide subjective advice (e.g., 'You should cut back on dining').\n"
+                "4. Keep the response under 80 words. Be concise and professional."
             ),
             user_message=(
                 f"Customer message: '{user_message}'\n"
-                f"Error Encountered: '{error}'"
+                f"{history_block}"
+                f"\nTool Results:\n{json.dumps(tool_results, indent=2)}"
+                f"{context_block}"
             )
         )
-
-    def _missing_entity_result(self, missing_entity: str) -> AgentResult:
-        # This is a special case that doesn't need an LLM call.
-        response = f"I can help with that. Could you please provide the {missing_entity}?"
-        return AgentResult(
-            success=True,
-            output={"response": response, "tools_called": [], "tool_results": []},
-            agent_name=self.name,
-            model_tier=self.model_tier,
-            latency_ms=0,
-            tokens_used=0
-        )
+        logging.getLogger(__name__).error(f"[ACTION AGENT] Generated response: {result.get('content')}")
+        return result

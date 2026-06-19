@@ -1,4 +1,3 @@
-
 import os
 from sqlalchemy.ext.asyncio import (
     create_async_engine,
@@ -6,20 +5,16 @@ from sqlalchemy.ext.asyncio import (
     async_sessionmaker
 )
 from dotenv import load_dotenv
+from sqlalchemy.pool import NullPool
 from .models import Base
 
-load_dotenv()
-
-DATABASE_URL = os.getenv("DATABASE_URL").replace(
-    "postgresql://",
-    "postgresql+asyncpg://"
-)
+# Default to local SQLite database
+DATABASE_URL = "sqlite+aiosqlite:///./nexus_fintech.db"
 
 engine = create_async_engine(
     DATABASE_URL,
     echo=False,
-    pool_size=10,
-    max_overflow=20
+    poolclass=NullPool,
 )
 
 AsyncSessionLocal = async_sessionmaker(
@@ -27,7 +22,6 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession,
     expire_on_commit=False
 )
-
 
 async def get_db():
     async with AsyncSessionLocal() as session:
@@ -38,13 +32,7 @@ async def get_db():
             await session.rollback()
             raise
 
-
 async def create_tables():
     async with engine.begin() as conn:
-        await conn.execute(
-            __import__('sqlalchemy').text(
-                "CREATE EXTENSION IF NOT EXISTS vector"
-            )
-        )
         await conn.run_sync(Base.metadata.create_all)
-    print("All tables created successfully")
+    print("All SQLite tables created successfully")
